@@ -1,0 +1,217 @@
+#!/usr/bin/perl
+
+require "./Job.pl";
+
+#use ERASME::Backup::Job;
+use Config::General;
+use Getopt::Std;
+use POSIX qw(ceil floor);
+
+use Data::Dumper;
+
+use strict;
+
+our %CONF;
+our @JOBS;
+our @FINISHED;
+our %OPTS;
+#our @PRIOLIST;
+our $CMDLINE;
+
+$| = 1;
+
+
+sub read_config {
+	print STDERR "[backp] Reading config " . $OPTS{"config"} . "\n";
+
+	my $conf = new Config::General($OPTS{"config"});
+
+	%CONF = $conf->getall;
+
+	return 1;
+}
+
+
+sub create_jobs {
+	my $job;
+
+	foreach my $target (keys %CONF) {
+		$job = ERASME::Backup::Job->new($target);
+		$job->initialize($CONF{$target});
+		$job->dryrun($OPTS{"dry-run"});
+		$job->options($OPTS{"options"});
+		push @JOBS, $job;
+	}
+
+#	print Dumper(\@JOBS);
+}
+
+sub sort_targets {
+	@JOBS = sort { $a->priority() <=> $b->priority() } (@JOBS);
+
+	print STDERR "[sched] Targets will be backed up in this order : ";
+
+	foreach my $job (@JOBS) {
+		print STDERR $job->host() . " ";
+	}
+
+	print "\n";
+}
+
+sub get_states {
+	my %states;
+
+	foreach my $job (@JOBS) {
+		$states{$job->status()}++;
+	}
+
+	return \%states;
+}
+
+sub get_running {
+	my $running = 0;
+
+	$running = scalar &get_states->{"RUNNING"};
+
+#	foreach my $job (@JOBS) { $running++ if $job->is_running(); }
+
+	if ($running > 0) {
+		print STDERR "[sched] $running jobs running\n";
+	}
+
+	return $running;
+}
+
+sub do_join {
+		foreach my $job (@JOBS) { 
+			if ($job->is_joinable()) {
+				$job->end();
+				push @FINISHED, $job;
+			}
+		}
+}
+
+sub write_status {
+	my $states = &get_states;
+	my $total;
+
+	my $statestr;
+
+	open (STATE, ">" . $OPTS{'status-file'} . "." . $$ );
+
+	print STATE "#\n# erabackup status file, generated " . scalar localtime time;
+	print STATE "\n#\n# invoked with : $CMDLINE";
+
+	foreach my $st (keys %{$states}) {
+		$total += $states->{$st};
+		$statestr .= $states->{$st} . " $st, "
+	}
+
+	chop $statestr;	chop $statestr;
+
+	print STATE "\n# $total jobs ($statestr), " . floor(($states->{"TERMINATED"} + $states->{"DISABLED"}) * 1000 / $total) / 10 . "% done\n";
+	print STATE "#\n# JobName, Thread, Status, Create, Started, Finished\n#\n";
+
+	foreach my $job (@JOBS) {
+		print STATE $job->id() . "," . $job->tid() . "," . $job->status() . "," . $job->create_time() . "," . $job->start_time() . "," . $job->end_time() . "\n";
+	}
+
+	close STATE;
+}
+
+sub run_backup {
+	my @joblist=@JOBS;
+	my $states;
+
+	do {
+		if (&get_running < $OPTS{"processes"}) {
+			my $job = shift @joblist;
+			print STDERR "[sched] starting job\n";
+			$job->start();
+		} else {
+			&write_status;
+			sleep 1;
+			&do_join;
+		}
+	} while (scalar @joblist);
+
+	do {
+		$states = &get_states;
+		&write_status;
+		&do_join;
+	} while ($states->{"RUNNING"} + $states->{"CLOSING"});
+}
+
+sub report {
+	foreach my $job (sort { $a->id() cmp $b->id() } @JOBS) {
+		print "\nJob " . $job->id();
+		print "\n--------------";
+
+		if (!$job->enabled()) {
+			print "\n\tdisabled\n";
+			next;
+		}
+
+		print "\n\tcreated " . scalar localtime $job->create_time();
+
+		print "\n\tthread id " . $job->tid();
+		print "\n\tcommand " . $job->command();
+
+		print "\n\n\tstarted " . scalar localtime $job->start_time();
+		print "\n\tended " . scalar localtime $job->end_time();
+
+		print "\n\n\trun time : " . ($job->end_time() - $job->start_time()) . " secs";
+
+		print "\n\toutput : " . $job->result() . "\n";
+	}
+}
+
+sub parse_cli {
+	my %opts;
+
+	$opts{'c'} = "/etc/bontmia/sources";
+  $opts{'p'} = 2;
+	$opts{'s'} = "/tmp/erabackup.stat";
+
+	getopts('np:c:o:s:', \%opts);
+
+  $OPTS{"config"}      = $opts{'c'};
+  $OPTS{"processes"}   = $opts{'p'};
+  $OPTS{"options"}     = $opts{'o'};
+  $OPTS{"dry-run"}     = $opts{'n'};
+  $OPTS{"status-file"} = $opts{'s'};
+}
+
+sub main {
+	$CMDLINE = join(" ", @ARGV);
+
+	&parse_cli;
+
+	print STDERR "[backp] Starting backup process with " . $OPTS{"processes"} . " slots \n";
+
+	&read_config;
+
+#	print Dumper(\%CONF);
+
+	&create_jobs;
+
+	&sort_targets;
+
+	&run_backup;
+
+	print STDERR "[backp] Backup done.\n\n";
+
+	print "###############################\n";
+	print "######### R e p o r t #########\n";
+	print "###############################\n";
+
+	&report;
+}
+
+
+&main;
+
+
+
+
+
