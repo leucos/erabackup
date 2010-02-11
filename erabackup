@@ -29,6 +29,11 @@ $| = 1;
 sub read_config {
 	print STDERR "[backp] Reading config " . $OPTS{"config"} . "\n";
 
+	if (! -r $OPTS{"config"}) {
+		print "Unable to open config file " . $OPTS{"config"} . "\n";
+		exit;
+	}
+
 	my $conf = new Config::General($OPTS{"config"});
 
 	%CONF = $conf->getall;
@@ -104,6 +109,7 @@ sub do_join {
 
 sub write_status {
 	my $states = &get_states;
+	my $tempfile = $OPTS{'status-file'} . ".tmp";
 	my $total;
 
 	my $statestr;
@@ -129,7 +135,7 @@ sub write_status {
 
 	close STATE;
 
-	rename $OPTS{'status-file'} . ".tmp" $OPTS{'status-file'};
+	rename $tempfile, $OPTS{'status-file'};
 }
 
 sub run_backup {
@@ -157,6 +163,7 @@ sub run_backup {
 
 sub gen_report {
 	my $report;
+	my @parts;
 
 	$report .= "############################################\n";
 	$report .= "######### B a c k u p  R e p o r t #########\n";
@@ -180,10 +187,13 @@ sub gen_report {
 		$report .= "\n\n  started " . scalar localtime $job->start_time();
 		$report .= "\n  ended " . scalar localtime $job->end_time();
 
-		$report .= "\n\n  run time : " . ($job->end_time() - $job->start_time()) . " secs";
+		@parts = gmtime($job->end_time() - $job->start_time());
 
+		$report .= sprintf ("\n\n  run time : %d secs (%1dd%3dh%3dm%3ds)\n",($job->end_time() - $job->start_time()),@parts[7,2,1,0]);
 		$report .= "\n  output : " . $job->result() . "\n";
 	}
+
+	$report .= "\n";
 
 	return $report;
 }
@@ -206,7 +216,7 @@ sub show_status {
 			}
 		}
 
-		print "#\n# Last file autodetected : $file\n# (last modified " . scalar localtime $lasttime;
+		print "#\n# Status file autodetected : $file\n# (last modified " . scalar localtime $lasttime;
 		print ")\n";
 	}
 
@@ -261,14 +271,12 @@ sub parse_cli {
 		&show_status($opts{'d'});
 	}
 
-	exit;
-
-  $OPTS{"config"}      = $opts{'c'};
-  $OPTS{"processes"}   = $opts{'p'};
+  $OPTS{"config"}      = $opts{'c'} if defined $opts{'c'};
+  $OPTS{"processes"}   = $opts{'p'} if defined $opts{'p'};
   $OPTS{"options"}     = $opts{'o'};
   $OPTS{"dry-run"}     = $opts{'n'};
-  $OPTS{"status-file"} = $opts{'s'};
-	$OPTS{"mail-to"}     = $opts{'m'};
+  $OPTS{"status-file"} = $opts{'s'} if defined $opts{'s'};
+	$OPTS{"mail-to"}     = $opts{'m'} if defined $opts{'m'};
 }
 
 sub main {
