@@ -5,11 +5,16 @@ require "./Job.pl";
 #use ERASME::Backup::Job;
 use Config::General;
 use Getopt::Std;
+use Sys::Hostname;
 use POSIX qw(ceil floor);
+
+use Mail::Sendmail;
 
 use Data::Dumper;
 
 use strict;
+
+our $VERSION = "1.0";
 
 our %CONF;
 our @JOBS;
@@ -36,14 +41,20 @@ sub create_jobs {
 	my $job;
 
 	foreach my $target (keys %CONF) {
-		$job = ERASME::Backup::Job->new($target);
-		$job->initialize($CONF{$target});
-		$job->dryrun($OPTS{"dry-run"});
-		$job->options($OPTS{"options"});
-		push @JOBS, $job;
+		if (ref $CONF{$target} eq "HASH") {
+			$job = ERASME::Backup::Job->new($target);
+			$job->initialize($CONF{$target});
+			$job->dryrun($OPTS{"dry-run"});
+			$job->options($OPTS{"options"});
+			push @JOBS, $job;
+		} else {
+			# Global option
+			$OPTS{$target} = $CONF{$target};
+		}
 	}
 
 #	print Dumper(\@JOBS);
+	print Dumper(\%OPTS);
 }
 
 sub sort_targets {
@@ -97,7 +108,7 @@ sub write_status {
 
 	my $statestr;
 
-	open (STATE, ">" . $OPTS{'status-file'} . "." . $$ );
+	open (STATE, ">" . $OPTS{'status-file'} . ".tmp");
 
 	print STATE "#\n# erabackup status file, generated " . scalar localtime time;
 	print STATE "\n#\n# invoked with : $CMDLINE";
@@ -117,6 +128,8 @@ sub write_status {
 	}
 
 	close STATE;
+
+	rename $OPTS{'status-file'} . ".tmp" $OPTS{'status-file'};
 }
 
 sub run_backup {
@@ -128,8 +141,8 @@ sub run_backup {
 			my $job = shift @joblist;
 			print STDERR "[sched] starting job\n";
 			$job->start();
-		} else {
 			&write_status;
+		} else {
 			sleep 1;
 			&do_join;
 		}
@@ -142,44 +155,120 @@ sub run_backup {
 	} while ($states->{"RUNNING"} + $states->{"CLOSING"});
 }
 
-sub report {
+sub gen_report {
+	my $report;
+
+	$report .= "############################################\n";
+	$report .= "######### B a c k u p  R e p o r t #########\n";
+	$report .= "############################################\n";
+
 	foreach my $job (sort { $a->id() cmp $b->id() } @JOBS) {
-		print "\nJob " . $job->id();
-		print "\n--------------";
+		$report .= "\nJob " . $job->id() . "\n";
+
+		$report .= '-'x(length($job->id())+5) . "\n";
 
 		if (!$job->enabled()) {
-			print "\n\tdisabled\n";
+			$report .= "\n  disabled\n";
 			next;
 		}
 
-		print "\n\tcreated " . scalar localtime $job->create_time();
+		$report .= "\n  created " . scalar localtime $job->create_time();
 
-		print "\n\tthread id " . $job->tid();
-		print "\n\tcommand " . $job->command();
+		$report .= "\n  thread id " . $job->tid();
+		$report .= "\n  command " . $job->command();
 
-		print "\n\n\tstarted " . scalar localtime $job->start_time();
-		print "\n\tended " . scalar localtime $job->end_time();
+		$report .= "\n\n  started " . scalar localtime $job->start_time();
+		$report .= "\n  ended " . scalar localtime $job->end_time();
 
-		print "\n\n\trun time : " . ($job->end_time() - $job->start_time()) . " secs";
+		$report .= "\n\n  run time : " . ($job->end_time() - $job->start_time()) . " secs";
 
-		print "\n\toutput : " . $job->result() . "\n";
+		$report .= "\n  output : " . $job->result() . "\n";
 	}
+
+	return $report;
+}
+
+sub show_status {
+	my $file = shift;
+
+	my @fields;
+	my @parts;
+
+	my $lasttime = 0;
+
+	if (!defined $file) {
+		my @files = glob("/tmp/erabackup.stat.*");
+
+		foreach my $f (@files) {
+			if ((stat($f))[9] > $lasttime) {
+				$lasttime = (stat($f))[9];
+				$file = $f
+			}
+		}
+
+		print "#\n# Last file autodetected : $file\n# (last modified " . scalar localtime $lasttime;
+		print ")\n";
+	}
+
+	open(STAT, "<$file") or die "Error : unable to open status file $file";
+
+	while(<STAT>) {
+		if (/^#/) { print; next; }
+		@fields = split /,/;
+		if (($fields[5]-$fields[4]) > 0) {
+			@parts = gmtime($fields[5]-$fields[4]);
+			printf ("%20.20s => %3dd%3dh%3dm%3ds\n",$fields[0],@parts[7,2,1,0]);
+		} else {
+			@parts = gmtime(time-$fields[4]);
+			printf ("%20.20s => %3dd%3dh%3dm%3ds (still running)\n",$fields[0],@parts[7,2,1,0]); 
+		}
+	}
+
+	print "\n";
+}
+
+sub help {
+	print "\nerabackup version $VERSION\n\n";
+	print "Usage :\n";
+	print "  erabackup [-c config] [-p nthreads] [-s statusfile] [-m recipient] [-n] [-o \"options\"] [-h] [-d [statusfile]]\n\n";
+
+	print "   -c config       : use config as configuration file (default is /etc/erabackup.conf)\n";
+	print "   -p nthreads     : use nthreads number of parallel threads for backup (default is 2)\n";
+	print "   -s statusfile   : use statusfile as status file during backup (default is /tmp/erabackup.stat.PID)\n";
+	print "   -m recipient    : send email report to recipient when done (default is to output report to STDOUT)\n";
+	print "   -n              : dry run, simulation mode.\n";
+	print "   -o \"options\"    : append \"options\" to bontmia command (e.g. \"--bwlimit 250\").\n";
+	print "   -d [statusfile] : displays backup progress for statusfile. If no statusfile specified, will use the most recent /tmp/erabackup.stat.*\n";
+	print "   -h              : show this help\n\n";
 }
 
 sub parse_cli {
 	my %opts;
 
-	$opts{'c'} = "/etc/bontmia/sources";
-  $opts{'p'} = 2;
-	$opts{'s'} = "/tmp/erabackup.stat";
+	$OPTS{'config'} = "/etc/erabackup.conf";
+  $OPTS{'processes'} = 2;
+	$OPTS{'status-file'} = "/tmp/erabackup.stat.$$";
+	$OPTS{'mail-to'} = undef;
 
-	getopts('np:c:o:s:', \%opts);
+	getopts('np:c:o:s:m:hd:', \%opts);
+
+	if (defined $opts{'h'}) {
+		&help;
+		exit;
+	}
+
+	if (exists $opts{'d'}) {
+		&show_status($opts{'d'});
+	}
+
+	exit;
 
   $OPTS{"config"}      = $opts{'c'};
   $OPTS{"processes"}   = $opts{'p'};
   $OPTS{"options"}     = $opts{'o'};
   $OPTS{"dry-run"}     = $opts{'n'};
   $OPTS{"status-file"} = $opts{'s'};
+	$OPTS{"mail-to"}     = $opts{'m'};
 }
 
 sub main {
@@ -191,7 +280,7 @@ sub main {
 
 	&read_config;
 
-#	print Dumper(\%CONF);
+	print Dumper(\%CONF);
 
 	&create_jobs;
 
@@ -201,11 +290,20 @@ sub main {
 
 	print STDERR "[backp] Backup done.\n\n";
 
-	print "###############################\n";
-	print "######### R e p o r t #########\n";
-	print "###############################\n";
+	if (defined $OPTS{"mail-to"}) {
+		my %mail;
 
-	&report;
+		%mail = ( To   => $OPTS{"mail-to"},
+							From => getlogin() . '@' . hostname(),
+							Subject => "Backup report",
+							Message => &gen_report );
+
+		unshift @{$Mail::Sendmail::mailcfg{'smtp'}} , $OPTS{'smtp_server'};
+
+		sendmail(%mail) || print "Error sending mail: $Mail::Sendmail::error\n";
+	} else {
+		print &gen_report;
+	}
 }
 
 
