@@ -269,6 +269,7 @@ sub parse_cli {
 
 	if (exists $opts{'d'}) {
 		&show_status($opts{'d'});
+		exit;
 	}
 
   $OPTS{"config"}      = $opts{'c'} if defined $opts{'c'};
