@@ -259,7 +259,7 @@ sub status {
 	return "RUNNING" if ($self->is_running);
 	return "CLOSING" if ($self->is_joinable);
 
-	return "TERMINATED";
+	return "COMPLETED";
 }
 
 sub is_joinable {
@@ -347,8 +347,6 @@ sub create_jobs {
 		}
 	}
 
-#	print Dumper(\@JOBS);
-	print Dumper(\%OPTS);
 }
 
 sub sort_targets {
@@ -415,7 +413,7 @@ sub write_status {
 
 	chop $statestr;	chop $statestr;
 
-	print STATE "\n# $total jobs ($statestr), " . floor(($states->{"TERMINATED"} + $states->{"DISABLED"}) * 1000 / $total) / 10 . "% done\n";
+	print STATE "\n# $total jobs ($statestr), " . floor(($states->{"COMPLETED"} + $states->{"DISABLED"}) * 1000 / $total) / 10 . "% done\n";
 	print STATE "#\n# JobName, Thread, Status, Create, Started, Finished\n#\n";
 
 	foreach my $job (@JOBS) {
@@ -450,13 +448,26 @@ sub run_backup {
 	} while ($states->{"RUNNING"} + $states->{"CLOSING"});
 }
 
-sub gen_report {
+sub gen_full_report {
 	my $report;
-	my @parts;
 
 	$report .= "############################################\n";
 	$report .= "######### B a c k u p  R e p o r t #########\n";
 	$report .= "############################################\n";
+
+	$report .= "\n########## Per host backup times ##########\n";
+
+	$report .= &show_status($OPTS{"status-file"});
+
+	$report .= "\n##########     Backup details    ##########\n";
+	$report .= &gen_report();
+
+	return $report;
+}
+
+sub gen_report {
+	my $report;
+	my @parts;
 
 	foreach my $job (sort { $a->id() cmp $b->id() } @JOBS) {
 		$report .= "\nJob " . $job->id() . "\n";
@@ -490,6 +501,8 @@ sub gen_report {
 sub show_status {
 	my $file = shift;
 
+	my $result;
+
 	my @fields;
 	my @parts;
 
@@ -505,25 +518,25 @@ sub show_status {
 			}
 		}
 
-		print "#\n# Status file autodetected : $file\n# (last modified " . scalar localtime $lasttime;
-		print ")\n";
+		$result .= "#\n# Status file autodetected : $file\n# (last modified " . scalar localtime $lasttime;
+		$result .= ")\n";
 	}
 
 	open(STAT, "<$file") or die "Error : unable to open status file $file";
 
 	while(<STAT>) {
-		if (/^#/) { print; next; }
+		if (/^#/) { $result .= $_; next; }
 		@fields = split /,/;
-		if (($fields[5]-$fields[4]) > 0) {
+		if (($fields[5]-$fields[4]) >= 0) {
 			@parts = gmtime($fields[5]-$fields[4]);
-			printf ("%20.20s => %3dd%3dh%3dm%3ds\n",$fields[0],@parts[7,2,1,0]);
+			$result .= sprintf ("%20.20s => %3dd%3dh%3dm%3ds\n",$fields[0],@parts[7,2,1,0]);
 		} else {
 			@parts = gmtime(time-$fields[4]);
-			printf ("%20.20s => %3dd%3dh%3dm%3ds (still running)\n",$fields[0],@parts[7,2,1,0]); 
+			$result .= sprintf ("%20.20s => %3dd%3dh%3dm%3ds (still running)\n",$fields[0],@parts[7,2,1,0]); 
 		}
 	}
 
-	print "\n";
+	$result .= "\n";
 }
 
 sub help {
@@ -557,7 +570,7 @@ sub parse_cli {
 	}
 
 	if (exists $opts{'d'}) {
-		&show_status($opts{'d'});
+		print &show_status($opts{'d'});
 		exit;
 	}
 
@@ -578,8 +591,6 @@ sub main {
 
 	&read_config;
 
-	print Dumper(\%CONF);
-
 	&create_jobs;
 
 	&sort_targets;
@@ -590,17 +601,18 @@ sub main {
 
 	if (defined $OPTS{"mail-to"}) {
 		my %mail;
+		my $login = getlogin || getpwuid($<) || "root";
 
 		%mail = ( To   => $OPTS{"mail-to"},
-							From => getlogin() . '@' . hostname(),
+							From =>  $login . '@' . hostname(),
 							Subject => "Backup report",
-							Message => &gen_report );
+							Message => &gen_full_report );
 
 		unshift @{$Mail::Sendmail::mailcfg{'smtp'}} , $OPTS{'smtp_server'};
 
 		sendmail(%mail) || print "Error sending mail: $Mail::Sendmail::error\n";
 	} else {
-		print &gen_report;
+		print &gen_full_report;
 	}
 }
 
