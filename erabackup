@@ -626,6 +626,287 @@ sub main {
 &main;
 
 
+__END__
+
+=pod
+
+=head1 NAME
+
+erabackup - ERASME's tool for // and easy backups
+
+=head1 DESCRIPTION
+
+erabackup is a wrapper for bontmia backup. erabackup will provide more
+sophisticated backup control that bontmia can.
+
+=head2 Parallelism
+
+erabackup can start multiple bontmia backups in parallel. Using the -p
+option, one can set the number of threads started. Each thread will
+run a bontmia job. Once the bontmia job is done, the thread is
+recycled to run another bontmia job, and so on, until there are no
+jobs left to be run.
+
+=head2 Reporting
+
+erabackup has nice reporting capabilities. It records bontmia jobs
+outputs and mail them at the end of the process. The recipient for the
+mail report is set with the '-m' switch. If erabackup is invoked with
+'-d' while another erabackup process is running, the status for the
+current erabackup process will be displayed. If multiple erabackup
+processes are running, a specific status can also be shown with the
+'-d' option.
+
+=head2 Configuration
+
+erabackup uses Apache's style configuration files. Each target is
+enclosed between opening (<target>) and closing (</target>) tags, e.g.
+
+<www.example.org>
+
+...
+
+</www.example.org>
+
+Multiple target can be configured in a single file, or each target can
+be in it's own file, etc...  Between opening and closing tags, the
+following keywords are recognized :
+
+
+=head3 enabled
+
+=over
+
+Can be set to 1 or 0. If enable is set to 0, this target will be
+skipped during the backup process. If enabled is not specified, the
+target will of course be processed.
+
+=back
+
+=head3 priority
+
+=over
+
+Sets the job priority among all jobs defined in this file. The target
+with the B<lowest> priority will be run B<first>. If two jobs have the
+same priority, luck rules. The default priority is 100.
+
+=back
+
+=head3 rotation
+
+=over
+
+Rotation scheme, as defined for bontmia. Refer to the bontmia
+documentation for the proper syntax and meaning.
+
+=back
+
+=head3 destination
+
+=over
+
+Where the backup will be stored. This parameters is passed without any
+modification to bontmia. So the same remarks apply here : check the
+bontmia documentation for proper configuration.
+
+=back
+
+=head3 host
+
+=over
+
+Which host will bontmia connect to (using ssh) for the backup.
+
+=back
+
+=head3 remoteuser
+
+=over
+
+Which user will bontmia (i.e. rsync) connect as on, the remote
+host. The default is root if no value is specified.
+
+=back
+
+=head3 source
+
+=over
+
+What source directories have to be backed up. The souce keywork can
+appear multiple times.
+
+=back
+
+=head2 Configuration Syntax
+
+The values for the keywords can be specified in two ways :
+
+=over
+
+option = value
+
+=back
+
+or
+
+=over
+
+option value
+
+=back
+
+Lines starting with '#' will be ignored.
+
+=head2 Command Line Options
+
+erabackup supports a bunch of command line switches.
+
+=over
+
+=item -c <config>
+
+Use <config> as configuration file (default is /etc/erabackup.conf).
+
+=item -p <nthreads>
+
+Use <nthreads> number of parallel threads for backup (default is 2).
+
+=item -s <statusfile>
+
+Use <statusfile> as status file during backup (default is
+/tmp/erabackup.stat.PID) where PID is the PID of the erabackup
+process.
+
+=item -m <recipient>
+
+Send email report to <recipient> when done (default is to output
+report to STDOUT).
+
+=item -e <target>
+
+Execute backup only for <target>. All other targets are skipped, event
+if they have "enabled=1" in their configuration. If <target> has
+"enabled=0" in it's configuration, it will be skipped.
+
+=item -n
+
+Dry run. Rsync will skip file transfers, and bontmia will simulate a
+backup.
+
+=item -o <"options">
+
+Append "options" to bontmia command (e.g. "--bwlimit 250").
+Enclosee options in '"'.
+
+=item -d [statusfile]
+
+Displays backup progress for statusfile. If no statusfile specified,
+will use the most recent file among /tmp/erabackup.stat.*
+
+=item -h
+
+Displays command line.
+
+=back
+
+=head2 Configuration File Example
+
+Configuration file example for 3 targets (www, ftp, mail).  ftp won't
+be backed up since it has "enabled=0" in it's configuration.  mail
+will be backed up first (priority = 90), and then www (priority=100).
+
+=over
+
+<mail>
+
+	# backup for mail.example.org (approx: 18 Go)
+	enabled=1
+	priority=90
+	destination=/var/backup/mail.example.org
+	rotation=0minutes4hours7days4weeks3month0years
+
+	host=mail.example.org
+	remoteuser=root
+
+	source	/etc
+	source	/usr/local/bin
+	source	/var/lib/cyrus
+	source	/var/lib/mysql
+	source	/var/spool
+</mail>
+
+<www>
+
+	# backup for www.example.org (aprox: 300 Mo)
+	enabled=1
+	priority=100
+	destination=/var/backup/www.example.org
+	rotation=0minutes0hours7days4weeks6month0years
+
+	host=www.example.org
+	remoteuser=root
+
+	source /etc
+	source /usr/local/bin
+	source /var/www
+</www>
+
+<ftp>
+
+	# backup for ftp.example.org (aprox: 300 Go)
+	enabled=0
+	priority=120
+	destination=/var/backup/ftp.example.org
+	rotation=0minutes0hours0days4weeks6month0years
+
+	host=ftp.example.org
+
+	source /etc
+	source /var/ftp
+</ftp>
+
+=back
+
+=head2 Invocation Scenarios
+
+=head3 erabackup -p1 -c /etc/bontmia/servers.config -m webmaster@example.com -e www
+
+Will backup target 'www' only. This target is defined somewhere in
+"/etc/bontmia/servers.config". A backup report will be mailed to
+"webmaster@example.com". Only one thread will be started for this backup.
+This scenario assume the above configuration file is used.
+
+=head3 erabackup -p8 -c /etc/bontmia/manyservers.config -m noc@example.org -o "--bwlimit 250"
+
+Will backup all enabled targets defined in
+"/etc/bontmia/manyservers.config". Eight threads will be used for this (so
+eight backups will take place in parallel), and each backup will be
+limited in bandwidth to 250KBps (2Mbps). A report will be mailed to
+"noc@example.org" at the end of the process.
+
+This command is fine to make the initial full backup without hogging
+the clients or the backup server (but it can take days, literally,
+depending on the volume to be backuped, just do the maths).
+
+=head3 erabackup -p8 -c /etc/bontmia/manyservers.config -m noc@example.org -n
+
+Same as the above, but running in simulation mode.
+
+=head3 erabackup -d
+
+Displays the most recent generated status data.
+
+=head3 erabackup -d /tmp/erabackup.stat.13412
+
+Displays status data generated by process 13412, and stored in file
+/tmp/erabackup.stat.13412
+
+=head1 CAVEATS
+
+Status files are never cleaned up by erabackup. This is the sysadmin's
+job to do so, or some tmp cleaner.
 
 
 
+=cut
