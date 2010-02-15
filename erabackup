@@ -335,6 +335,10 @@ sub create_jobs {
 	my $job;
 
 	foreach my $target (keys %CONF) {
+		if (defined $OPTS{"single-target"}) {
+			next unless $target eq $OPTS{"single-target"};
+		}
+
 		if (ref $CONF{$target} eq "HASH") {
 			$job = ERASME::Backup::Job->new($target);
 			$job->initialize($CONF{$target});
@@ -548,6 +552,7 @@ sub help {
 	print "   -p nthreads     : use nthreads number of parallel threads for backup (default is 2)\n";
 	print "   -s statusfile   : use statusfile as status file during backup (default is /tmp/erabackup.stat.PID)\n";
 	print "   -m recipient    : send email report to recipient when done (default is to output report to STDOUT)\n";
+	print "   -e target       : execute backup only for target\n";
 	print "   -n              : dry run, simulation mode.\n";
 	print "   -o \"options\"    : append \"options\" to bontmia command (e.g. \"--bwlimit 250\").\n";
 	print "   -d [statusfile] : displays backup progress for statusfile. If no statusfile specified, will use the most recent /tmp/erabackup.stat.*\n";
@@ -562,7 +567,7 @@ sub parse_cli {
 	$OPTS{'status-file'} = "/tmp/erabackup.stat.$$";
 	$OPTS{'mail-to'} = undef;
 
-	getopts('np:c:o:s:m:hd:', \%opts);
+	getopts('np:c:o:s:m:hd:e:', \%opts);
 
 	if (defined $opts{'h'}) {
 		&help;
@@ -574,12 +579,13 @@ sub parse_cli {
 		exit;
 	}
 
-  $OPTS{"config"}      = $opts{'c'} if defined $opts{'c'};
-  $OPTS{"processes"}   = $opts{'p'} if defined $opts{'p'};
-  $OPTS{"options"}     = $opts{'o'};
-  $OPTS{"dry-run"}     = $opts{'n'};
-  $OPTS{"status-file"} = $opts{'s'} if defined $opts{'s'};
-	$OPTS{"mail-to"}     = $opts{'m'} if defined $opts{'m'};
+	$OPTS{"single-target"} = $opts{'e'};
+  $OPTS{"config"}        = $opts{'c'} if defined $opts{'c'};
+  $OPTS{"processes"}     = $opts{'p'} if defined $opts{'p'};
+  $OPTS{"options"}       = $opts{'o'};
+  $OPTS{"dry-run"}       = $opts{'n'};
+  $OPTS{"status-file"}   = $opts{'s'} if defined $opts{'s'};
+	$OPTS{"mail-to"}       = $opts{'m'} if defined $opts{'m'};
 }
 
 sub main {
