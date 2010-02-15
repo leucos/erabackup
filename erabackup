@@ -557,6 +557,8 @@ sub help {
 	print "   -o \"options\"    : append \"options\" to bontmia command (e.g. \"--bwlimit 250\").\n";
 	print "   -d [statusfile] : displays backup progress for statusfile. If no statusfile specified, will use the most recent /tmp/erabackup.stat.*\n";
 	print "   -h              : show this help\n\n";
+
+	print "  You can display the complete manual by issuing 'perldoc erabackup'\n\n";
 }
 
 sub parse_cli {
