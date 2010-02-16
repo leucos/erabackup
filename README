@@ -1,0 +1,6 @@
+erabackup - ERASME's tool for // and easy backups
+
+erabackup works with bontmia backup (http://folk.uio.no/johnen/bontmia/)
+to provide fast parallel backups with extensive reports.
+
+Please read the man page or the pod doc for more information.

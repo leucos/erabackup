@@ -913,9 +913,14 @@ job to do so, or some tmp cleaner.
 
 Probably many, but none know so far.
 
+=head1 SEE ALSO
+
+erabackup B<requires> bontmia backup to be in the PATH to work.
+Check http://folk.uio.no/johnen/bontmia/ for more info on bontmia backup.
+
 =head1 AUTHOR
 
-Michel Blanc <mblanc@@erasme.org>
+Michel Blanc <mblanc@erasme.org>
 
 =head1 COPYRIGHT
 
